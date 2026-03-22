@@ -1,0 +1,15 @@
+[project]
+name = "frappe_next_bridge"
+version = "0.1.0"
+description = "Frappe companion app for frappe-next-bridge monorepo"
+requires-python = ">=3.10"
+dependencies = [
+    "Click~=8.2.0",
+]
+
+[build-system]
+requires = ["flit_core>=3.4.0,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.bench.frappe-dependencies]
+# frappe = ">=15.0.0"

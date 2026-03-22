@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+
+# JS/Node — live in frappe-next-sdk repo, not here
+node_modules/
+packages/
+next_web/
+pnpm-lock.yaml
+pnpm-workspace.yaml
+package.json
+.pnpm-store/
+
+# Dev artifacts
+.next/
+.env
+.env.local
+.DS_Store
+*.log
+*.swp
