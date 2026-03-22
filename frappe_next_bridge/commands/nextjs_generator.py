@@ -1,5 +1,4 @@
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -138,7 +137,8 @@ class NextJSGenerator:
     # ── Steps ────────────────────────────────────────────────────────────────
 
     def _scaffold_nextjs_project(self) -> None:
-        r = lambda tpl: _render(tpl, self.app, self.project, self.port, self.site)
+        def r(tpl: str) -> str:
+            return _render(tpl, self.app, self.project, self.port, self.site)
         p = self.proj_path
 
         _write(p / "package.json",                 r(PACKAGE_JSON))
@@ -202,7 +202,7 @@ class NextJSGenerator:
             )
             return
 
-        click.echo(f"\n[frappe-next] Installing dependencies with pnpm...")
+        click.echo("\n[frappe-next] Installing dependencies with pnpm...")
         result = subprocess.run(
             [pnpm, "install"],
             cwd=self.proj_path,
