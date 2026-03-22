@@ -3,7 +3,7 @@
 **Add a production-ready Next.js App Router project to any Frappe app with one command.**
 
 ```bash
-bench get-app frappe-next-bridge
+bench get-app https://github.com/Ujjwal-Aggrawal2279/frappe-next-bridge.git
 bench add-nextjs
 ```
 
@@ -62,7 +62,7 @@ my_erp/
 ### 1. Get the app
 
 ```bash
-bench get-app frappe-next-bridge
+bench get-app https://github.com/Ujjwal-Aggrawal2279/frappe-next-bridge.git
 ```
 
 ### 2. Scaffold Next.js inside your Frappe app

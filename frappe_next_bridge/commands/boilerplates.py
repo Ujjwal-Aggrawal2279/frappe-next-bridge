@@ -15,7 +15,7 @@ PACKAGE_JSON = """\
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@frappe-next/core": "github:Ujjwal-Aggrawal2279/frappe-next-sdk#main",
+    "@frappe-next/core": "github:Ujjwal-Aggrawal2279/frappe-next-sdk#path:packages/core",
     "next":              "latest",
     "react":             "latest",
     "react-dom":         "latest",
