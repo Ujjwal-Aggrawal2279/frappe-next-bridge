@@ -233,11 +233,18 @@ interface FrappeUser {
 }
 
 export default async function HomePage() {
-  const users = await getList<FrappeUser>("User", {
-    fields:  ["name", "full_name", "user_type", "enabled"],
-    filters: [["enabled", "=", "1"]],
-    limit:   10,
-  });
+  let users: FrappeUser[] = [];
+  let fetchError: string | null = null;
+
+  try {
+    users = await getList<FrappeUser>("User", {
+      fields:  ["name", "full_name", "user_type", "enabled"],
+      filters: [["enabled", "=", "1"]],
+      limit:   10,
+    });
+  } catch (err) {
+    fetchError = err instanceof Error ? err.message : "Failed to load users";
+  }
 
   return (
     <main className={styles.container}>
@@ -246,24 +253,30 @@ export default async function HomePage() {
         Server-side rendered with Next.js App Router + Frappe Framework
       </p>
 
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>Email</th>
-            <th>Full Name</th>
-            <th>Type</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.name}>
-              <td>{u.name}</td>
-              <td>{u.full_name}</td>
-              <td>{u.user_type}</td>
+      {fetchError ? (
+        <p className={styles.error}>
+          {fetchError} — set FRAPPE_API_KEY &amp; FRAPPE_API_SECRET in .env.local
+        </p>
+      ) : (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Full Name</th>
+              <th>Type</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.name}>
+                <td>{u.name}</td>
+                <td>{u.full_name}</td>
+                <td>{u.user_type}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </main>
   );
 }
@@ -285,6 +298,11 @@ PAGE_MODULE_CSS = """\
 
 .subtitle {
   color: #666;
+  margin-bottom: 2rem;
+}
+
+.error {
+  color: crimson;
   margin-bottom: 2rem;
 }
 
@@ -313,7 +331,7 @@ LOGIN_PAGE_TSX = """\
 
 import { useState, type FormEvent } from "react";
 import { useSearchParams }          from "next/navigation";
-import { frappeClientPost,
+import { frappeLogin,
          useFrappeRouter }          from "@frappe-next/core/client";
 import styles                       from "./login.module.css";
 
@@ -333,10 +351,11 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // frappeClientPost throws FrappeAuthError on 401 — if it resolves,
-      // the session is established regardless of the message ("Logged In" / "No App")
-      await frappeClientPost("login", { usr: email, pwd: password });
-      navigate(nextPath);
+      const result = await frappeLogin(email, password);
+      // Use Frappe's home_page only when there's no explicit ?next= destination.
+      // home_page is e.g. "/me" for admin, "/" for regular users.
+      const dest = nextPath !== "/" ? nextPath : (result.home_page ?? "/");
+      navigate(dest);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
