@@ -11,6 +11,7 @@ from .boilerplates import (
     DOCKER_COMPOSE_YAML,
     DOCKER_NGINX_CONF,
     ENV_LOCAL,
+    FRAPPE_FALLBACK_ROUTE_TS,
     GITIGNORE,
     GLOBALS_CSS,
     HEALTH_ROUTE_TS,
@@ -160,7 +161,8 @@ class NextJSGenerator:
         _write(p / "src" / "app" / "page.module.css",          r(PAGE_MODULE_CSS))
         _write(p / "src" / "app" / "login" / "page.tsx",       r(LOGIN_PAGE_TSX))
         _write(p / "src" / "app" / "login" / "login.module.css", r(LOGIN_MODULE_CSS))
-        _write(p / "src" / "app" / "api" / "health" / "route.ts", HEALTH_ROUTE_TS)
+        _write(p / "src" / "app" / "health" / "route.ts",            HEALTH_ROUTE_TS)
+        _write(p / "src" / "app" / "[...frappe]" / "route.ts", FRAPPE_FALLBACK_ROUTE_TS)
 
         # Empty public dir so Next.js doesn't warn
         (p / "public").mkdir(parents=True, exist_ok=True)

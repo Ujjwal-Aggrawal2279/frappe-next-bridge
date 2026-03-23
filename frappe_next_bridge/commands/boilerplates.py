@@ -157,7 +157,8 @@ import type { NextRequest }           from "next/server";
 const handler = createFrappeAuthMiddleware({
   loginPath: "/login",
   publicPaths: [
-    "/api/",  // ALL Frappe API calls bypass our auth check
+    "/api/",   // Frappe API rewrites — bypass Next.js auth, Frappe handles its own
+    "/health", // Docker healthcheck — must be unauthenticated
   ],
   sessionTimeoutMs: 4000,
 });
@@ -333,18 +334,10 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const result = await frappeClientPost<string>("login", {
-        usr: email,
-        pwd: password,
-      });
-
-      if (result === "Logged In") {
-        // navigate() automatically picks Next.js router or window.location
-        // based on whether the path belongs to Next.js or Frappe
-        navigate(nextPath);
-      } else {
-        setError("Login failed. Check your credentials.");
-      }
+      // frappeClientPost throws FrappeAuthError on 401 — if it resolves,
+      // the session is established regardless of the message ("Logged In" / "No App")
+      await frappeClientPost("login", { usr: email, pwd: password });
+      navigate(nextPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -556,10 +549,16 @@ const NEXT_PORT   = parseInt(process.env.NEXT_PORT   ?? '3000', 10)
 const PROXY_PORT  = parseInt(process.env.PROXY_PORT  ?? '8080', 10)
 
 // Paths that belong to Frappe — everything else goes to Next.js
-const FRAPPE_PREFIXES = ['/api/', '/app/', '/assets/', '/files/', '/private/']
+const FRAPPE_PREFIXES = [
+  '/api/', '/app/', '/assets/', '/files/', '/private/', '/socket.io/',
+  '/me', '/update-password', '/print/', '/list/', '/form/', '/tree/', '/report/', '/dashboard/',
+]
 
 function isForFrappe(url) {
-  return FRAPPE_PREFIXES.some(p => url === p.slice(0, -1) || url.startsWith(p))
+  if (FRAPPE_PREFIXES.some(p => url === p.slice(0, -1) || url.startsWith(p))) return true
+  // Root-path Frappe commands: /?cmd=web_logout etc.
+  if (url.startsWith('/?cmd=') || url === '/?cmd') return true
+  return false
 }
 
 function forward(req, res, host, port) {
@@ -695,9 +694,96 @@ wait
 # WARNING: Do not delete — used by Docker healthcheck and load balancers.
 HEALTH_ROUTE_TS = """\
 // ⚠️  Do not delete — required by Docker healthcheck and load balancers.
-// GET /api/health → { status: 'ok' }
+// GET /health → { status: 'ok' }
 export function GET() {
   return Response.json({ status: 'ok' })
+}
+"""
+
+# ── src/app/[...frappe]/route.ts ───────────────────────────────────────────────
+# Dynamic Frappe fallback — proxies any path not matched by a Next.js page.
+# App Router guarantees static pages always take priority over this catch-all.
+FRAPPE_FALLBACK_ROUTE_TS = """\
+// Dynamic Frappe fallback — proxies any path not matched by a Next.js page to Frappe.
+//
+// Routing priority in App Router guarantees static pages always win:
+//   /login             → app/login/page.tsx        (your page)
+//   /products          → app/products/page.tsx     (your page)
+//   /me                → this file                 (Frappe fallback)
+//   /update-password   → this file                 (Frappe fallback)
+//
+// Do NOT add Frappe paths to any static list — this handles them dynamically.
+
+import { type NextRequest, NextResponse } from 'next/server'
+
+const FRAPPE_URL = process.env.FRAPPE_INTERNAL_URL ?? 'http://localhost:8000'
+const SITE_NAME  = process.env.FRAPPE_SITE_NAME    ?? 'site1.localhost'
+
+// Hop-by-hop headers must not be forwarded
+const HOP_BY_HOP = new Set([
+  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+  'te', 'trailers', 'transfer-encoding', 'upgrade',
+])
+
+async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse> {
+  const path   = '/' + segments.join('/')
+  const target = new URL(path + req.nextUrl.search, FRAPPE_URL)
+
+  const upstream = new Headers()
+  req.headers.forEach((v, k) => {
+    if (!HOP_BY_HOP.has(k.toLowerCase())) upstream.set(k, v)
+  })
+  upstream.set('X-Frappe-Site-Name', SITE_NAME)
+  upstream.delete('host')
+
+  const isBodyMethod = req.method !== 'GET' && req.method !== 'HEAD'
+
+  const res = await fetch(target, {
+    method:   req.method,
+    headers:  upstream,
+    body:     isBodyMethod ? req.body : undefined,
+    redirect: 'manual',
+    ...(isBodyMethod ? { duplex: 'half' } : {}),
+    signal: AbortSignal.timeout(30_000),
+  })
+
+  const responseHeaders = new Headers()
+  res.headers.forEach((v, k) => {
+    if (!HOP_BY_HOP.has(k.toLowerCase())) responseHeaders.set(k, v)
+  })
+
+  return new NextResponse(res.body, {
+    status:  res.status,
+    headers: responseHeaders,
+  })
+}
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ frappe: string[] }> },
+) {
+  return proxy(req, (await params).frappe)
+}
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ frappe: string[] }> },
+) {
+  return proxy(req, (await params).frappe)
+}
+
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ frappe: string[] }> },
+) {
+  return proxy(req, (await params).frappe)
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ frappe: string[] }> },
+) {
+  return proxy(req, (await params).frappe)
 }
 """
 
@@ -829,7 +915,10 @@ server {
         proxy_pass http://backend-server;
     }
 
-    # ── Frappe Desk (/app and all sub-paths) ──────────────────────────────────
+    # ── Frappe Desk ────────────────────────────────────────────────────────────
+    # Only /app is routed directly to Frappe for performance.
+    # All other Frappe paths (/me, /update-password, /print, etc.) are handled
+    # dynamically by Next.js app/[...frappe]/route.ts → proxied to Frappe.
     location /app {
         proxy_http_version 1.1;
         proxy_set_header X-Forwarded-For    $remote_addr;
@@ -963,7 +1052,7 @@ services:
       backend:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
