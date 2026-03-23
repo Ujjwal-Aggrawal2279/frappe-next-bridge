@@ -90,10 +90,9 @@ const nextConfig: NextConfig = {
   async rewrites() {
     const frappe = getFrappeUrl();
     return [
-      { source: "/api/method/:path*",   destination: `${frappe}/api/method/:path*`   },
-      { source: "/api/resource/:path*", destination: `${frappe}/api/resource/:path*` },
-      { source: "/assets/:path*",       destination: `${frappe}/assets/:path*`       },
-      { source: "/files/:path*",        destination: `${frappe}/files/:path*`        },
+      { source: "/api/:path*", destination: `${frappe}/api/:path*` },
+      { source: "/assets/:path*", destination: `${frappe}/assets/:path*` },
+      { source: "/files/:path*",  destination: `${frappe}/files/:path*`  },
     ];
   },
 };
