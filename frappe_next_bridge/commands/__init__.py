@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 
 from .deploy_nextjs import deploy_nextjs
-from .nextjs_generator import NextJSGenerator
+from .nextjs_generator import NextJSGenerator, _read_bench_config
 
 # Apps that are infrastructure — skip them from the selection menu
 _SKIP_APPS = {"frappe", "frappe_types", "doppio", "frappe_next_bridge", "erpnext"}
@@ -90,4 +90,88 @@ def add_nextjs(app: str | None, project_name: str, pro: bool) -> None:
     generator.generate()
 
 
-commands = [add_nextjs, deploy_nextjs]
+@click.command("generate-types")
+@click.option(
+    "--app",
+    default=None,
+    help="Frappe app whose DocTypes to generate (skips interactive menu if omitted)",
+)
+@click.option(
+    "--project",
+    default="next_web",
+    show_default=True,
+    help="Next.js project folder name inside the app (used to resolve output path)",
+)
+@click.option(
+    "--site",
+    default=None,
+    help="Frappe site name (default: reads default_site from common_site_config.json)",
+)
+@click.option(
+    "--out",
+    default=None,
+    help="Custom output file path (default: <app>/<project>/src/types/frappe-types.d.ts)",
+)
+@click.option(
+    "--all",
+    "all_doctypes",
+    is_flag=True,
+    default=False,
+    help="Generate interfaces for every DocType installed on the site (ignores --app filter)",
+)
+@click.option(
+    "--only",
+    default=None,
+    help="Comma-separated DocType names to generate (e.g. 'Customer,Sales Order,Item')",
+)
+def generate_types(
+    app: str | None,
+    project: str,
+    site: str | None,
+    out: str | None,
+    all_doctypes: bool,
+    only: str | None,
+) -> None:
+    """Generate TypeScript interfaces from Frappe DocType definitions.
+
+    \b
+    Reads live DocType metadata from the Frappe database and writes a
+    fully-typed .d.ts file into your Next.js project.
+
+    \b
+    Examples:
+      bench generate-types --app my_erp
+      bench generate-types --app my_erp --site mysite.localhost
+      bench generate-types --app my_erp --only "Customer,Sales Order"
+      bench generate-types --app my_erp --all --out src/types/all.d.ts
+    """
+    import frappe  # noqa: PLC0415
+
+    from .generate_types import run as _run
+
+    if not app:
+        app = _pick_app_interactively()
+
+    # Resolve site name
+    if not site:
+        _, site = _read_bench_config(Path("."))
+
+    frappe.init(site=site)
+    frappe.connect()
+
+    try:
+        out_path = Path(out) if out else None
+        only_list = [d.strip() for d in only.split(",")] if only else []
+        _run(
+            app=app,
+            site=site,
+            project=project,
+            out_path=out_path,
+            all_doctypes=all_doctypes,
+            only=only_list,
+        )
+    finally:
+        frappe.destroy()
+
+
+commands = [add_nextjs, deploy_nextjs, generate_types]

@@ -1,0 +1,305 @@
+"""
+bench generate-types
+
+Reads Frappe DocType metadata from the live database and emits
+TypeScript interface declarations into the Next.js project.
+
+Output: src/types/frappe-types.d.ts  (or a custom --out path)
+
+Usage:
+  bench generate-types --app my_erp
+  bench generate-types --app my_erp --site mysite.localhost
+  bench generate-types --app my_erp --only "Customer,Sales Order,Item"
+  bench generate-types --app my_erp --all --out src/types/all-doctypes.d.ts
+"""
+from __future__ import annotations
+
+import sys
+import textwrap
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import click
+
+
+# ── Frappe field-type → TypeScript type ────────────────────────────────────
+
+_SCALAR_MAP: dict[str, str] = {
+    # Text
+    "Data":            "string",
+    "Text":            "string",
+    "Long Text":       "string",
+    "Small Text":      "string",
+    "Code":            "string",
+    "Read Only":       "string",
+    "Password":        "string",
+    "Autocomplete":    "string",
+    "Dynamic Link":    "string",
+    "Attach":          "string",
+    "Attach Image":    "string",
+    "Color":           "string",
+    "Signature":       "string",
+    "Barcode":         "string",
+    "Geolocation":     "string",
+    "Phone":           "string",
+    # Dates (ISO strings over the wire)
+    "Date":            "string",
+    "Datetime":        "string",
+    "Time":            "string",
+    # Numbers
+    "Int":             "number",
+    "Float":           "number",
+    "Currency":        "number",
+    "Percent":         "number",
+    "Duration":        "number",
+    "Rating":          "number",
+    # Other
+    "JSON":            "unknown",
+    # Frappe stores booleans as 0/1 — preserve that in the type
+    "Check":           "0 | 1",
+}
+
+# Pure layout / UI fields — no JS payload, skip entirely
+_SKIP_TYPES: frozenset[str] = frozenset({
+    "Section Break", "Column Break", "Tab Break", "Fold",
+    "Heading", "HTML", "HTML Editor", "Image", "Button",
+    "Break", "Markdown Editor",
+})
+
+# Fields that exist on every Frappe document regardless of DocType definition
+_STANDARD_FIELDS = """\
+  /** Document name / primary key */
+  name: string
+  owner: string
+  /** ISO 8601 creation timestamp */
+  creation: string
+  /** ISO 8601 last-modified timestamp */
+  modified: string
+  modified_by: string
+  /** 0 = draft · 1 = submitted · 2 = cancelled */
+  docstatus: 0 | 1 | 2
+  idx: number
+  doctype: string"""
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+def _interface_name(doctype: str) -> str:
+    """'Sales Order Item' → 'SalesOrderItem'"""
+    return (
+        doctype
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("_", "")
+    )
+
+
+def _safe_key(fieldname: str) -> str:
+    """Return a valid TypeScript property key (quote if not a plain identifier)."""
+    return fieldname if fieldname.isidentifier() else f'"{fieldname}"'
+
+
+def _ts_type(field: dict[str, Any]) -> str | None:
+    """
+    Map a single DocField dict to its TypeScript type string.
+    Returns None for purely presentational fields that carry no data.
+    """
+    ft: str = field.get("fieldtype", "")
+
+    if ft in _SKIP_TYPES:
+        return None
+
+    if ft in _SCALAR_MAP:
+        return _SCALAR_MAP[ft]
+
+    if ft == "Link":
+        linked: str = (field.get("options") or "").strip()
+        comment = f"  // Link → {linked}" if linked else ""
+        return f"string{comment}"
+
+    if ft == "Select":
+        raw: str = field.get("options") or ""
+        choices = [o.strip() for o in raw.splitlines() if o.strip()]
+        if choices:
+            return " | ".join(f'"{c}"' for c in choices)
+        return "string"
+
+    if ft in ("Table", "Table MultiSelect"):
+        child: str = (field.get("options") or "").strip()
+        child_ts = _interface_name(child) if child else "Record<string, unknown>"
+        return f"{child_ts}[]"
+
+    # Unknown field type — keep it in the output but typed as unknown
+    return "unknown"
+
+
+def _render_interface(doctype: str, fields: list[dict[str, Any]]) -> str:
+    iface = _interface_name(doctype)
+    lines: list[str] = [f"export interface {iface} {{"]
+
+    # Standard Frappe fields present on every doc
+    lines.append(_STANDARD_FIELDS)
+
+    for f in fields:
+        if not f.get("fieldname"):
+            continue
+
+        ts = _ts_type(f)
+        if ts is None:
+            continue
+
+        key = _safe_key(f["fieldname"])
+        label: str = f.get("label") or ""
+        optional = "" if f.get("reqd") else "?"
+
+        if label and label.lower() != f["fieldname"].replace("_", " ").lower():
+            lines.append(f"  /** {label} */")
+
+        lines.append(f"  {key}{optional}: {ts}")
+
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _render_file_header(app: str, site: str) -> str:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return textwrap.dedent(f"""\
+        /**
+         * Auto-generated by frappe-next-bridge — `bench generate-types`
+         * App      : {app}
+         * Site     : {site}
+         * Generated: {ts}
+         *
+         * ⚠️  Do not edit this file manually.
+         *     Re-run `bench generate-types --app {app}` to refresh.
+         */
+
+        /* eslint-disable */
+        // prettier-ignore-start
+
+        """)
+
+
+# ── Public entry point ───────────────────────────────────────────────────────
+
+def run(
+    *,
+    app: str,
+    site: str,
+    project: str,
+    out_path: Path | None,
+    all_doctypes: bool,
+    only: list[str],
+) -> None:
+    """
+    Generate TypeScript interfaces.
+
+    Must be called AFTER `frappe.init(site=…)` + `frappe.connect()`.
+    """
+    import frappe  # noqa: PLC0415 — deferred: frappe must be initialised first
+
+    click.echo(f"\n[generate-types] site={site}  app={app}\n")
+
+    # ── Collect target DocType names ─────────────────────────────────────────
+
+    if only:
+        names = list(only)
+        click.echo(f"  Generating {len(names)} specified DocType(s)")
+
+    elif all_doctypes:
+        rows = frappe.get_all("DocType", fields=["name"], order_by="name asc")
+        names = [r["name"] for r in rows]
+        click.echo(f"  Generating all {len(names)} DocTypes in this site")
+
+    else:
+        # Resolve app → its modules → its DocTypes
+        modules = frappe.get_all(
+            "Module Def",
+            filters={"app_name": app},
+            fields=["name"],
+        )
+        if not modules:
+            click.echo(
+                f"  ERROR: No modules found for app '{app}'.\n"
+                f"  Tip: install the app on this site first, or use --all.",
+                err=True,
+            )
+            sys.exit(1)
+
+        module_names = [m["name"] for m in modules]
+        rows = frappe.get_all(
+            "DocType",
+            filters={"module": ["in", module_names]},
+            fields=["name"],
+            order_by="name asc",
+        )
+        names = [r["name"] for r in rows]
+        click.echo(
+            f"  App '{app}': {len(module_names)} module(s), "
+            f"{len(names)} DocType(s)"
+        )
+
+    if not names:
+        click.echo("  Nothing to generate — exiting.", err=True)
+        sys.exit(1)
+
+    # ── Build interfaces ─────────────────────────────────────────────────────
+
+    interfaces: list[str] = []
+    errors: list[str] = []
+
+    for doctype_name in sorted(names):
+        try:
+            meta = frappe.get_meta(doctype_name)
+            fields = [
+                {
+                    "fieldname": f.fieldname,
+                    "fieldtype": f.fieldtype,
+                    "label":     f.label or "",
+                    "options":   f.options or "",
+                    "reqd":      f.reqd,
+                }
+                for f in meta.fields
+                if f.fieldname
+            ]
+            interfaces.append(_render_interface(doctype_name, fields))
+            click.echo(f"  ✓  {doctype_name}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(doctype_name)
+            click.echo(f"  ✗  {doctype_name} — {exc}", err=True)
+
+    # ── Resolve output path ──────────────────────────────────────────────────
+
+    if out_path is None:
+        # Default: apps/<app>/<project>/src/types/frappe-types.d.ts
+        out_path = (
+            Path("../apps") / app / project / "src" / "types" / "frappe-types.d.ts"
+        )
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    body = "\n\n".join(interfaces)
+    content = _render_file_header(app, site) + body + "\n"
+    out_path.write_text(content, encoding="utf-8")
+
+    # ── Summary ──────────────────────────────────────────────────────────────
+
+    click.echo(f"""
+╔══════════════════════════════════════════════════════╗
+║   frappe-next: generate-types complete               ║
+╚══════════════════════════════════════════════════════╝
+
+  Interfaces : {len(interfaces)}
+  Errors     : {len(errors)}
+  Output     : {out_path}
+
+  Import in your components:
+    import type {{ Customer }} from '@/types/frappe-types'
+""")
+
+    if errors:
+        click.echo(
+            f"  ⚠️  {len(errors)} DocType(s) failed — see errors above.",
+            err=True,
+        )
