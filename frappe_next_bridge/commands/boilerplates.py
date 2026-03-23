@@ -928,7 +928,12 @@ server {
 DOCKER_COMPOSE_YAML = """\
 # docker/compose.nextjs.yaml — frappe_docker override for {{app}}/{{project}}
 #
-# Usage (run from your frappe_docker clone directory):
+# Two env vars must be set in your frappe_docker .env before running:
+#
+#   NEXTJS_BUILD_CONTEXT=/abs/path/to/apps/{{app}}/{{project}}
+#   NEXTJS_DOCKER_DIR=/abs/path/to/apps/{{app}}/docker/
+#
+# Then from your frappe_docker directory:
 #
 #   docker compose \\\\
 #     -f compose.yaml \\\\
@@ -936,14 +941,14 @@ DOCKER_COMPOSE_YAML = """\
 #     -f overrides/compose.redis.yaml \\\\
 #     -f overrides/compose.noproxy.yaml \\\\
 #     -f /abs/path/to/apps/{{app}}/docker/compose.nextjs.yaml \\\\
-#     up -d
+#     up -d --build
 
 services:
 
   # ── Next.js standalone server ─────────────────────────────────────────────
   nextjs:
     build:
-      context: ../{{project}}        # relative to this file → apps/{{app}}/{{project}}
+      context: ${NEXTJS_BUILD_CONTEXT}   # absolute path — set in frappe_docker .env
       dockerfile: Dockerfile
     image: {{app}}_nextjs:latest
     restart: unless-stopped
@@ -958,16 +963,16 @@ services:
       backend:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
   # ── Extend Frappe's nginx with Next.js routing ────────────────────────────
   frontend:
     volumes:
-      - ./nginx.conf.template:/templates/nginx/frappe.conf.template:ro
+      - ${NEXTJS_DOCKER_DIR}nginx.conf.template:/templates/nginx/frappe.conf.template:ro
     depends_on:
       nextjs:
         condition: service_started

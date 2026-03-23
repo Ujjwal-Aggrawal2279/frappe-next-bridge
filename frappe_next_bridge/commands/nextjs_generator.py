@@ -298,5 +298,10 @@ class NextJSGenerator:
        cd apps/{self.app} && bash prod.sh
        → http://localhost:8080
 
+  Docker deployment (add to frappe_docker .env):
+  ──────────────────────────────────────────────────────
+  NEXTJS_BUILD_CONTEXT={self.proj_path}
+  NEXTJS_DOCKER_DIR={self.app_path / "docker"}/
+
   Docs: https://github.com/frappe-next/frappe-next-bridge
 """)
