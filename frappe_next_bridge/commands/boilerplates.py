@@ -368,12 +368,12 @@ export default function LoginPage() {
       <h1 className={styles.title}>Sign In</h1>
       <form onSubmit={handleSubmit} className={styles.form}>
         <div className={styles.field}>
-          <label htmlFor="email" className={styles.label}>Email</label>
+          <label htmlFor="email" className={styles.label}>Email / Username</label>
           <input
             id="email"
-            type="email"
+            type="text"
             required
-            autoComplete="email"
+            autoComplete="username"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className={styles.input}
