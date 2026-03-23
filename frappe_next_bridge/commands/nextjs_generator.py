@@ -13,6 +13,7 @@ from .boilerplates import (
     ENV_LOCAL,
     GITIGNORE,
     GLOBALS_CSS,
+    HEALTH_ROUTE_TS,
     LAYOUT_TSX,
     LOGIN_MODULE_CSS,
     LOGIN_PAGE_TSX,
@@ -159,6 +160,7 @@ class NextJSGenerator:
         _write(p / "src" / "app" / "page.module.css",          r(PAGE_MODULE_CSS))
         _write(p / "src" / "app" / "login" / "page.tsx",       r(LOGIN_PAGE_TSX))
         _write(p / "src" / "app" / "login" / "login.module.css", r(LOGIN_MODULE_CSS))
+        _write(p / "src" / "app" / "api" / "health" / "route.ts", HEALTH_ROUTE_TS)
 
         # Empty public dir so Next.js doesn't warn
         (p / "public").mkdir(parents=True, exist_ok=True)
@@ -279,6 +281,9 @@ class NextJSGenerator:
   App     : {self.app}
   Project : {self.proj_path}
   Frappe  : http://127.0.0.1:{self.port}  (site: {self.site})
+
+  ⚠️  Do not delete src/app/api/health/route.ts
+      Required by Docker healthcheck and load balancers.
 
   Next steps:
   ──────────────────────────────────────────────────────

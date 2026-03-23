@@ -691,6 +691,16 @@ trap "kill ${NEXT_PID} ${PROXY_PID} 2>/dev/null; exit 0" INT TERM
 wait
 """
 
+# ── src/app/api/health/route.ts ───────────────────────────────────────────────
+# WARNING: Do not delete — used by Docker healthcheck and load balancers.
+HEALTH_ROUTE_TS = """\
+// ⚠️  Do not delete — required by Docker healthcheck and load balancers.
+// GET /api/health → { status: 'ok' }
+export function GET() {
+  return Response.json({ status: 'ok' })
+}
+"""
+
 # ── docker/Dockerfile ──────────────────────────────────────────────────────────
 # Multi-stage build: deps → build → minimal runtime (node:24-alpine)
 # output: standalone produces a self-contained server.js with zero node_modules
