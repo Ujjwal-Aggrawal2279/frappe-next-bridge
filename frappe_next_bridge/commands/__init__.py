@@ -3,6 +3,7 @@ from pathlib import Path
 
 import click
 
+from .deploy_nextjs import deploy_nextjs
 from .nextjs_generator import NextJSGenerator
 
 # Apps that are infrastructure — skip them from the selection menu
@@ -89,4 +90,4 @@ def add_nextjs(app: str | None, project_name: str, pro: bool) -> None:
     generator.generate()
 
 
-commands = [add_nextjs]
+commands = [add_nextjs, deploy_nextjs]

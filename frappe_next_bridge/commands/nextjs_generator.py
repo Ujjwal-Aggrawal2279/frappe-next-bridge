@@ -7,6 +7,9 @@ import click
 
 from .boilerplates import (
     DEV_SH,
+    DOCKERFILE,
+    DOCKER_COMPOSE_YAML,
+    DOCKER_NGINX_CONF,
     ENV_LOCAL,
     GITIGNORE,
     GLOBALS_CSS,
@@ -17,6 +20,8 @@ from .boilerplates import (
     PACKAGE_JSON,
     PAGE_MODULE_CSS,
     PAGE_TSX,
+    PROD_SH,
+    PROXY_JS,
     PROXY_TS,
     TSCONFIG_JSON,
 )
@@ -129,6 +134,7 @@ class NextJSGenerator:
 
         self._scaffold_nextjs_project()
         self._write_dev_sh()
+        self._write_docker_files()
         self._patch_hooks_py()
         self._install_dependencies()
 
@@ -163,6 +169,30 @@ class NextJSGenerator:
         _write(dev_sh_path, content)
         dev_sh_path.chmod(0o755)
         click.echo(f"  wrote  {dev_sh_path}  (chmod +x)")
+
+        prod_sh_path = self.app_path / "prod.sh"
+        content = _render(PROD_SH, self.app, self.project, self.port, self.site)
+        _write(prod_sh_path, content)
+        prod_sh_path.chmod(0o755)
+        click.echo(f"  wrote  {prod_sh_path}  (chmod +x)")
+
+        proxy_js_path = self.app_path / "proxy.js"
+        _write(proxy_js_path, PROXY_JS)
+        click.echo(f"  wrote  {proxy_js_path}")
+
+    def _write_docker_files(self) -> None:
+        """Write Docker deployment files into apps/<app>/docker/."""
+        def r(tpl: str) -> str:
+            return _render(tpl, self.app, self.project, self.port, self.site)
+
+        docker_dir = self.app_path / "docker"
+
+        # Dockerfile lives inside the Next.js project (build context = project dir)
+        _write(self.proj_path / "Dockerfile",           DOCKERFILE)
+
+        # nginx template and compose override live in app-level docker/ dir
+        _write(docker_dir / "nginx.conf.template",      DOCKER_NGINX_CONF)
+        _write(docker_dir / "compose.nextjs.yaml",      r(DOCKER_COMPOSE_YAML))
 
     def _patch_hooks_py(self) -> None:
         """Add CORS allow_cors entry to the Frappe app's hooks.py."""
@@ -255,14 +285,13 @@ class NextJSGenerator:
   1. Verify your Frappe API key in:
        {self.proj_path}/.env.local
 
-  2. Start the dev server:
+  2. Dev server (hot reload):
        cd apps/{self.app} && bash dev.sh
+       → http://localhost:3000
 
-     — OR —
-       cd apps/{self.app}/{self.project}
-       FRAPPE_INTERNAL_URL=http://127.0.0.1:{self.port} pnpm dev
-
-  3. Open http://localhost:3000
+     Production preview (nginx-identical proxy):
+       cd apps/{self.app} && bash prod.sh
+       → http://localhost:8080
 
   Docs: https://github.com/frappe-next/frappe-next-bridge
 """)

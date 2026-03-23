@@ -1,4 +1,4 @@
-# ─── Template strings for bench add-nextjs ────────────────────────────────────
+# ─── Template strings for bench add-nextjs / bench deploy-nextjs ──────────────
 # Placeholders:  {{app}}  {{project}}  {{port}}  {{site}}
 # Use: tpl.replace("{{app}}", app).replace("{{project}}", project) etc.
 
@@ -57,6 +57,7 @@ TSCONFIG_JSON = """\
 
 # ── next.config.ts ────────────────────────────────────────────────────────────
 NEXT_CONFIG_TS = """\
+import os   from "os";
 import type { NextConfig } from "next";
 
 function getFrappeUrl(): string {
@@ -67,8 +68,24 @@ function getFrappeUrl(): string {
   );
 }
 
+// Auto-detect all non-loopback IPv4 addresses on this machine so that
+// HMR WebSocket works from any LAN/VM host without manual configuration.
+// Only relevant in development — skipped entirely in production builds.
+function getAllowedDevOrigins(): string[] {
+  if (process.env.NODE_ENV === "production") return [];
+  const hosts: string[] = [];
+  for (const iface of Object.values(os.networkInterfaces())) {
+    for (const addr of iface ?? []) {
+      if (addr.family === "IPv4" && !addr.internal) hosts.push(addr.address);
+    }
+  }
+  return hosts;
+}
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  transpilePackages: ["@frappe-next/core"],
+  allowedDevOrigins: getAllowedDevOrigins(),
 
   async rewrites() {
     const frappe = getFrappeUrl();
@@ -294,15 +311,16 @@ PAGE_MODULE_CSS = """\
 LOGIN_PAGE_TSX = """\
 "use client";
 
-import { useState, type FormEvent }   from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { frappeClientPost }           from "@frappe-next/core/client";
-import styles                         from "./login.module.css";
+import { useState, type FormEvent } from "react";
+import { useSearchParams }          from "next/navigation";
+import { frappeClientPost,
+         useFrappeRouter }          from "@frappe-next/core/client";
+import styles                       from "./login.module.css";
 
 export default function LoginPage() {
-  const router       = useRouter();
-  const searchParams = useSearchParams();
-  const nextPath     = searchParams.get("next") ?? "/";
+  const { navigate }  = useFrappeRouter();
+  const searchParams  = useSearchParams();
+  const nextPath      = searchParams.get("next") ?? "/";
 
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
@@ -315,15 +333,15 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // frappeClientPost returns data.message — Frappe returns "Logged In" (string)
       const result = await frappeClientPost<string>("login", {
         usr: email,
         pwd: password,
       });
 
       if (result === "Logged In") {
-        router.push(nextPath);
-        router.refresh();
+        // navigate() automatically picks Next.js router or window.location
+        // based on whether the path belongs to Next.js or Frappe
+        navigate(nextPath);
       } else {
         setError("Login failed. Check your credentials.");
       }
@@ -457,6 +475,21 @@ DEV_SH = """\
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Resolve Node ≥20 ─────────────────────────────────────────────────────────
+if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$HOME/.nvm/nvm.sh"
+  nvm use default 2>/dev/null || nvm use node 2>/dev/null || true
+fi
+
+NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
+NODE_MAJOR="${NODE_VERSION%%.*}"
+if [[ "${NODE_MAJOR:-0}" -lt 20 ]]; then
+  echo "[frappe-next] ERROR: Node.js ≥20 required (found v${NODE_VERSION:-unknown})"
+  echo "  Run: nvm alias default 24 && nvm use 24"
+  exit 1
+fi
+
 # ── Auto-detect bench port from common_site_config.json ──────────────────────
 BENCH_ROOT="$(cd "$(dirname "$0")/../../" && pwd)"   # → bench root
 SITE_CONFIG="${BENCH_ROOT}/sites/common_site_config.json"
@@ -492,4 +525,440 @@ echo ""
 
 cd {{project}}
 pnpm dev --port "${NEXT_PORT}"
+"""
+
+# ── proxy.js (zero-dep Node.js reverse proxy, mirrors production nginx) ────────
+PROXY_JS = """\
+#!/usr/bin/env node
+/**
+ * proxy.js — local production simulation proxy
+ *
+ * Mirrors exactly what nginx does in production — same routing rules,
+ * same headers. Zero npm dependencies, pure Node.js built-ins.
+ *
+ * Routing:
+ *   /api/*      → Frappe  (REST API)
+ *   /app/*      → Frappe  (desk)
+ *   /assets/*   → Frappe  (static assets)
+ *   /files/*    → Frappe  (uploaded files)
+ *   /private/*  → Frappe  (private files)
+ *   /*          → Next.js (your frontend)
+ */
+
+'use strict'
+
+const http = require('http')
+
+const FRAPPE_HOST = process.env.FRAPPE_HOST ?? '127.0.0.1'
+const FRAPPE_PORT = parseInt(process.env.FRAPPE_PORT ?? '8000', 10)
+const NEXT_HOST   = process.env.NEXT_HOST   ?? '127.0.0.1'
+const NEXT_PORT   = parseInt(process.env.NEXT_PORT   ?? '3000', 10)
+const PROXY_PORT  = parseInt(process.env.PROXY_PORT  ?? '8080', 10)
+
+// Paths that belong to Frappe — everything else goes to Next.js
+const FRAPPE_PREFIXES = ['/api/', '/app/', '/assets/', '/files/', '/private/']
+
+function isForFrappe(url) {
+  return FRAPPE_PREFIXES.some(p => url === p.slice(0, -1) || url.startsWith(p))
+}
+
+function forward(req, res, host, port) {
+  const upstream = http.request(
+    {
+      hostname: host,
+      port,
+      path:     req.url,
+      method:   req.method,
+      headers:  { ...req.headers, host: `${host}:${port}` },
+    },
+    upstreamRes => {
+      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers)
+      upstreamRes.pipe(res, { end: true })
+    },
+  )
+
+  upstream.on('error', err => {
+    if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' })
+    res.end(`Upstream error (${host}:${port}): ${err.message}`)
+  })
+
+  req.pipe(upstream, { end: true })
+}
+
+const server = http.createServer((req, res) => {
+  const [host, port] = isForFrappe(req.url ?? '/')
+    ? [FRAPPE_HOST, FRAPPE_PORT]
+    : [NEXT_HOST,   NEXT_PORT]
+
+  forward(req, res, host, port)
+})
+
+server.listen(PROXY_PORT, '0.0.0.0', () => {
+  const line = '─'.repeat(50)
+  console.log(`\\n  ┌${line}┐`)
+  console.log(`  │  frappe-next · local production proxy              │`)
+  console.log(`  └${line}┘\\n`)
+  console.log(`  Open   →  http://localhost:${PROXY_PORT}`)
+  console.log(`  Next   →  http://${NEXT_HOST}:${NEXT_PORT}`)
+  console.log(`  Frappe →  http://${FRAPPE_HOST}:${FRAPPE_PORT}\\n`)
+})
+"""
+
+# ── prod.sh (production simulation: build + start + proxy) ───────────────────
+PROD_SH = """\
+#!/usr/bin/env bash
+# prod.sh — local production simulation
+# Builds Next.js, runs the production server, and starts the proxy.
+# Access everything at http://localhost:${PROXY_PORT} — identical to production nginx.
+set -euo pipefail
+
+# ── Resolve Node ≥20 ──────────────────────────────────────────────────────────
+# nvm only activates in interactive shells. Load it explicitly so non-interactive
+# shells (e.g. `bash prod.sh`) also get the correct node version.
+if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "$HOME/.nvm/nvm.sh"
+  nvm use default 2>/dev/null || nvm use node 2>/dev/null || true
+fi
+
+NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
+NODE_MAJOR="${NODE_VERSION%%.*}"
+if [[ "${NODE_MAJOR:-0}" -lt 20 ]]; then
+  echo "[frappe-next] ERROR: Node.js ≥20 required (found v${NODE_VERSION:-unknown})"
+  echo "  Run: nvm alias default 24 && nvm use 24"
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BENCH_ROOT="$(cd "${SCRIPT_DIR}/../../" && pwd)"
+SITE_CONFIG="${BENCH_ROOT}/sites/common_site_config.json"
+
+if [[ -f "$SITE_CONFIG" ]]; then
+  FRAPPE_PORT=$(python3 -c "import json; d=json.load(open('${SITE_CONFIG}')); print(d.get('webserver_port', 8000))")
+  FRAPPE_SITE=$(python3 -c "import json; d=json.load(open('${SITE_CONFIG}')); print(d.get('default_site', 'site1.localhost'))")
+else
+  FRAPPE_PORT=8000
+  FRAPPE_SITE=site1.localhost
+fi
+
+FRAPPE_PORT="${FRAPPE_PORT:-8000}"
+NEXT_PORT="${NEXT_PORT:-3000}"
+PROXY_PORT="${PROXY_PORT:-8080}"
+
+# ── Release ports from any previous run ───────────────────────────────────────
+fuser -k "${NEXT_PORT}/tcp"  2>/dev/null || true
+fuser -k "${PROXY_PORT}/tcp" 2>/dev/null || true
+sleep 1
+
+echo "[frappe-next] Checking Frappe at http://127.0.0.1:${FRAPPE_PORT}..."
+if ! curl -sf "http://127.0.0.1:${FRAPPE_PORT}/api/method/frappe.ping" > /dev/null 2>&1; then
+  echo "[frappe-next] ERROR: Frappe not reachable. Run 'bench start' first."
+  exit 1
+fi
+echo "[frappe-next] Frappe OK"
+
+echo ""
+echo "[frappe-next] Building Next.js production bundle..."
+cd "${SCRIPT_DIR}/{{project}}"
+
+export FRAPPE_INTERNAL_URL="http://127.0.0.1:${FRAPPE_PORT}"
+export FRAPPE_URL="http://127.0.0.1:${FRAPPE_PORT}"
+export FRAPPE_SITE_NAME="${FRAPPE_SITE}"
+export NEXT_PUBLIC_FRAPPE_SITE="${FRAPPE_SITE}"
+
+pnpm build
+
+# standalone server doesn't bundle static assets — copy them in
+cp -r .next/static  .next/standalone/.next/static
+cp -r public        .next/standalone/public
+
+echo ""
+echo "[frappe-next] Starting Next.js production server on port ${NEXT_PORT}..."
+PORT="${NEXT_PORT}" HOSTNAME="0.0.0.0" node .next/standalone/server.js &
+NEXT_PID=$!
+
+sleep 2
+
+cd "${SCRIPT_DIR}"
+FRAPPE_PORT="${FRAPPE_PORT}" \\
+NEXT_PORT="${NEXT_PORT}"     \\
+PROXY_PORT="${PROXY_PORT}"   \\
+node proxy.js &
+PROXY_PID=$!
+
+trap "kill ${NEXT_PID} ${PROXY_PID} 2>/dev/null; exit 0" INT TERM
+
+wait
+"""
+
+# ── docker/Dockerfile ──────────────────────────────────────────────────────────
+# Multi-stage build: deps → build → minimal runtime (node:24-alpine)
+# output: standalone produces a self-contained server.js with zero node_modules
+DOCKERFILE = """\
+# ─── Stage 1: Install dependencies ───────────────────────────────────────────
+FROM node:24-alpine AS deps
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml* ./
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \\
+    pnpm install --frozen-lockfile
+
+# ─── Stage 2: Build ───────────────────────────────────────────────────────────
+FROM node:24-alpine AS builder
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN pnpm build
+
+# ─── Stage 3: Production runtime ──────────────────────────────────────────────
+FROM node:24-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN addgroup --system --gid 1001 nodejs \\
+ && adduser  --system --uid 1001 nextjs
+
+# Standalone server (includes all server-side deps, no node_modules needed)
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+
+# Client bundles — must live at .next/static relative to server.js
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Public directory (images, fonts, robots.txt, etc.)
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+USER nextjs
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+CMD ["node", "server.js"]
+"""
+
+# ── docker/nginx.conf.template ─────────────────────────────────────────────────
+# Replaces frappe_docker's default nginx template.
+# Routes: Frappe-owned paths → backend; everything else → nextjs:3000
+# "nextjs" is the Docker Compose service name — always resolves within the network.
+DOCKER_NGINX_CONF = """\
+# ─── Upstreams ────────────────────────────────────────────────────────────────
+upstream backend-server {
+    server ${BACKEND} fail_timeout=0;
+}
+
+upstream socketio-server {
+    server ${SOCKETIO} fail_timeout=0;
+}
+
+# Next.js standalone server — service name resolves via Docker DNS
+upstream nextjs-server {
+    server nextjs:3000 fail_timeout=0;
+}
+
+map $http_x_forwarded_proto $proxy_x_forwarded_proto {
+    default $scheme;
+    https   https;
+}
+
+server {
+    listen 8080;
+    server_name ${FRAPPE_SITE_NAME_HEADER};
+    root /home/frappe/frappe-bench/sites;
+
+    proxy_buffer_size       128k;
+    proxy_buffers           4 256k;
+    proxy_busy_buffers_size 256k;
+
+    include /etc/nginx/snippets/security_headers.conf;
+
+    set_real_ip_from   ${UPSTREAM_REAL_IP_ADDRESS};
+    real_ip_header     ${UPSTREAM_REAL_IP_HEADER};
+    real_ip_recursive  ${UPSTREAM_REAL_IP_RECURSIVE};
+
+    # ── Frappe static assets (served from sites volume) ────────────────────────
+    location /assets {
+        try_files $uri =404;
+        add_header Cache-Control "max-age=31536000";
+    }
+
+    location ~ ^/protected/(.*) {
+        internal;
+        try_files /${FRAPPE_SITE_NAME_HEADER}/$1 =404;
+    }
+
+    # ── Frappe WebSocket (realtime) ────────────────────────────────────────────
+    location /socket.io {
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_set_header X-Frappe-Site-Name ${FRAPPE_SITE_NAME_HEADER};
+        proxy_set_header Origin            $proxy_x_forwarded_proto://${FRAPPE_SITE_NAME_HEADER};
+        proxy_set_header Host              $host;
+        proxy_pass http://socketio-server;
+    }
+
+    # ── Frappe REST API ────────────────────────────────────────────────────────
+    location /api/ {
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For    $remote_addr;
+        proxy_set_header X-Forwarded-Proto  $proxy_x_forwarded_proto;
+        proxy_set_header X-Frappe-Site-Name ${FRAPPE_SITE_NAME_HEADER};
+        proxy_set_header Host               $host;
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_redirect off;
+        proxy_pass http://backend-server;
+    }
+
+    # ── Frappe Desk (/app and all sub-paths) ──────────────────────────────────
+    location /app {
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For    $remote_addr;
+        proxy_set_header X-Forwarded-Proto  $proxy_x_forwarded_proto;
+        proxy_set_header X-Frappe-Site-Name ${FRAPPE_SITE_NAME_HEADER};
+        proxy_set_header Host               $host;
+        proxy_set_header X-Use-X-Accel-Redirect True;
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_redirect off;
+        proxy_pass http://backend-server;
+    }
+
+    # ── Frappe file downloads ──────────────────────────────────────────────────
+    location /files/ {
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For    $remote_addr;
+        proxy_set_header X-Forwarded-Proto  $proxy_x_forwarded_proto;
+        proxy_set_header X-Frappe-Site-Name ${FRAPPE_SITE_NAME_HEADER};
+        proxy_set_header Host               $host;
+        proxy_set_header X-Use-X-Accel-Redirect True;
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_redirect off;
+        proxy_pass http://backend-server;
+    }
+
+    # ── Frappe private files ───────────────────────────────────────────────────
+    location /private/ {
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For    $remote_addr;
+        proxy_set_header X-Forwarded-Proto  $proxy_x_forwarded_proto;
+        proxy_set_header X-Frappe-Site-Name ${FRAPPE_SITE_NAME_HEADER};
+        proxy_set_header Host               $host;
+        proxy_set_header X-Use-X-Accel-Redirect True;
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_redirect off;
+        proxy_pass http://backend-server;
+    }
+
+    # ── Next.js — everything else (SSR, ISR, /_next/*, custom pages) ──────────
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Forwarded-Proto $proxy_x_forwarded_proto;
+        proxy_set_header Host              $host;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_redirect off;
+        proxy_pass http://nextjs-server;
+    }
+
+    sendfile on;
+    keepalive_timeout 15;
+    client_max_body_size    ${CLIENT_MAX_BODY_SIZE};
+    client_body_buffer_size 16K;
+    client_header_buffer_size 1k;
+
+    gzip on;
+    gzip_http_version 1.1;
+    gzip_comp_level   5;
+    gzip_min_length   256;
+    gzip_proxied      any;
+    gzip_vary         on;
+    gzip_types
+        application/atom+xml
+        application/javascript
+        application/json
+        application/rss+xml
+        application/vnd.ms-fontobject
+        application/x-font-ttf
+        application/font-woff
+        application/x-web-app-manifest+json
+        application/xhtml+xml
+        application/xml
+        font/opentype
+        image/svg+xml
+        image/x-icon
+        text/css
+        text/plain
+        text/x-component;
+}
+"""
+
+# ── docker/compose.nextjs.yaml ────────────────────────────────────────────────
+# Override for frappe_docker — adds the Next.js service and extends the frontend
+# nginx with the custom routing template above.
+#
+# Usage from your frappe_docker directory:
+#   docker compose \\
+#     -f compose.yaml \\
+#     -f overrides/compose.mariadb.yaml \\
+#     -f overrides/compose.redis.yaml \\
+#     -f overrides/compose.noproxy.yaml \\
+#     -f /abs/path/to/apps/{{app}}/docker/compose.nextjs.yaml \\
+#     up -d
+DOCKER_COMPOSE_YAML = """\
+# docker/compose.nextjs.yaml — frappe_docker override for {{app}}/{{project}}
+#
+# Usage (run from your frappe_docker clone directory):
+#
+#   docker compose \\\\
+#     -f compose.yaml \\\\
+#     -f overrides/compose.mariadb.yaml \\\\
+#     -f overrides/compose.redis.yaml \\\\
+#     -f overrides/compose.noproxy.yaml \\\\
+#     -f /abs/path/to/apps/{{app}}/docker/compose.nextjs.yaml \\\\
+#     up -d
+
+services:
+
+  # ── Next.js standalone server ─────────────────────────────────────────────
+  nextjs:
+    build:
+      context: ../{{project}}        # relative to this file → apps/{{app}}/{{project}}
+      dockerfile: Dockerfile
+    image: {{app}}_nextjs:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV:                production
+      FRAPPE_INTERNAL_URL:     http://backend:8000   # direct to gunicorn, no nginx hop
+      FRAPPE_SITE_NAME:        ${FRAPPE_SITE_NAME_HEADER:-localhost}
+      FRAPPE_API_KEY:          ${FRAPPE_API_KEY:-}
+      FRAPPE_API_SECRET:       ${FRAPPE_API_SECRET:-}
+      NEXT_PUBLIC_FRAPPE_SITE: ${FRAPPE_SITE_NAME_HEADER:-localhost}
+    depends_on:
+      backend:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ── Extend Frappe's nginx with Next.js routing ────────────────────────────
+  frontend:
+    volumes:
+      - ./nginx.conf.template:/templates/nginx/frappe.conf.template:ro
+    depends_on:
+      nextjs:
+        condition: service_started
 """
