@@ -14,6 +14,12 @@ allow_cors = [
     "http://127.0.0.1:3000",
 ]
 
+# ── Login page custom skin ────────────────────────────────────────────────────
+# Injected into every web/portal page (web.html).
+# CSS is scoped to body:has(.for-login) so it only affects /login.
+web_include_css = "/assets/frappe_next_bridge/css/login.css"
+web_include_js  = "/assets/frappe_next_bridge/js/login.js"
+
 # ── Optional: expose Next.js as Frappe website page ───────────────────────────
 # Uncomment if you want Frappe to hand off certain routes to Next.js.
 # website_route_rules = [

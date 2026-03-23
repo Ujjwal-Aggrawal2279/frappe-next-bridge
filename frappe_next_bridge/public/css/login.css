@@ -1,0 +1,209 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   frappe_next_bridge — custom login page skin
+   Scoped to body:has(.for-login) so it only fires on /login, /signup, /forgot.
+   Targets Frappe's stock HTML structure — no template changes needed.
+───────────────────────────────────────────────────────────────────────────── */
+
+/* ── Full-screen background ─────────────────────────────────────────────── */
+body:has(.for-login) {
+  background-image:    url("/assets/frappe_next_bridge/images/login-bg.png");
+  background-size:     cover;
+  background-position: center;
+  background-repeat:   no-repeat;
+  background-color:    #08070f;
+  min-height:          100dvh;
+}
+
+/* Hide default Frappe navbar / topbar on login */
+body:has(.for-login) .navbar,
+body:has(.for-login) .web-footer,
+body:has(.for-login) footer {
+  display: none !important;
+}
+
+/* ── Centre the card ────────────────────────────────────────────────────── */
+body:has(.for-login) .container {
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  min-height:      100dvh;
+  padding:         1.5rem;
+}
+
+/* ── Glass card ─────────────────────────────────────────────────────────── */
+body:has(.for-login) .login-content.page-card {
+  width:           100%;
+  max-width:       360px;
+  background:      rgba(15, 14, 20, 0.72) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter:         blur(20px) saturate(1.4);
+  border:          1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius:   20px !important;
+  padding:         2rem 1.875rem 1.875rem !important;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.04) inset,
+    0 24px 60px rgba(0, 0, 0, 0.55);
+  margin:          0 auto;
+}
+
+/* ── Card header (logo + title) ─────────────────────────────────────────── */
+body:has(.for-login) .page-card-head {
+  margin-bottom: 1.5rem !important;
+  text-align:    left;
+}
+
+body:has(.for-login) .page-card-head .app-logo {
+  display: none;        /* hide default app logo */
+}
+
+body:has(.for-login) .page-card-head h4 {
+  font-size:      1.625rem !important;
+  font-weight:    700 !important;
+  color:          #ffffff !important;
+  letter-spacing: -0.02em;
+  margin:         0 0 0.35rem !important;
+  line-height:    1.2;
+}
+
+/* Sub-heading (if any) */
+body:has(.for-login) .page-card-head p {
+  font-size:  0.875rem !important;
+  color:      rgba(255, 255, 255, 0.5) !important;
+  margin:     0 !important;
+  line-height: 1.5;
+}
+
+/* ── Inputs ─────────────────────────────────────────────────────────────── */
+body:has(.for-login) .form-control {
+  background:    rgba(255, 255, 255, 0.07) !important;
+  border:        1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 10px !important;
+  padding:       0.72rem 0.875rem 0.72rem 2.5rem !important;
+  font-size:     0.9rem !important;
+  color:         #ffffff !important;
+  transition:    border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  caret-color:   rgba(255,255,255,0.8);
+  outline:       none !important;
+  box-shadow:    none !important;
+}
+
+body:has(.for-login) .form-control::placeholder {
+  color: rgba(255, 255, 255, 0.28) !important;
+}
+
+body:has(.for-login) .form-control:focus {
+  border-color: rgba(255, 255, 255, 0.3) !important;
+  background:   rgba(255, 255, 255, 0.1) !important;
+  box-shadow:   0 0 0 3px rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── Field icon tint ────────────────────────────────────────────────────── */
+body:has(.for-login) .field-icon {
+  color:   rgba(255, 255, 255, 0.35) !important;
+  stroke:  rgba(255, 255, 255, 0.35) !important;
+  z-index: 2;
+}
+
+body:has(.for-login) .form-group:focus-within .field-icon {
+  color:  rgba(255, 255, 255, 0.7) !important;
+  stroke: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* ── Show/hide password toggle ──────────────────────────────────────────── */
+body:has(.for-login) .toggle-password {
+  color:      rgba(255, 255, 255, 0.4) !important;
+  font-size:  0.8rem !important;
+  transition: color 0.2s;
+}
+body:has(.for-login) .toggle-password:hover {
+  color: #ffffff !important;
+}
+
+/* ── Forgot password link ───────────────────────────────────────────────── */
+body:has(.for-login) .forgot-password-message a {
+  font-size:       0.8125rem !important;
+  color:           rgba(255, 255, 255, 0.5) !important;
+  text-decoration: none;
+  transition:      color 0.2s;
+}
+body:has(.for-login) .forgot-password-message a:hover {
+  color: #ffffff !important;
+}
+
+/* ── Form group spacing ─────────────────────────────────────────────────── */
+body:has(.for-login) .form-group {
+  margin-bottom: 0.875rem !important;
+}
+
+/* ── Submit / Login button ──────────────────────────────────────────────── */
+body:has(.for-login) .btn-login,
+body:has(.for-login) .btn-primary.btn-block {
+  background:     rgba(255, 255, 255, 0.92) !important;
+  border:         none !important;
+  border-radius:  10px !important;
+  color:          #0a0a0f !important;
+  font-size:      0.9375rem !important;
+  font-weight:    600 !important;
+  padding:        0.75rem 1.5rem !important;
+  width:          100%;
+  transition:     background 0.2s, transform 0.15s !important;
+  box-shadow:     none !important;
+  letter-spacing: 0.01em;
+}
+
+body:has(.for-login) .btn-login:hover,
+body:has(.for-login) .btn-primary.btn-block:hover {
+  background:  #ffffff !important;
+  transform:   translateY(-1px);
+  box-shadow:  none !important;
+}
+
+body:has(.for-login) .btn-login:active,
+body:has(.for-login) .btn-primary.btn-block:active {
+  transform: translateY(0) !important;
+}
+
+/* ── Sign-up / footer message ───────────────────────────────────────────── */
+body:has(.for-login) .sign-up-message {
+  color:     rgba(255, 255, 255, 0.45) !important;
+  font-size: 0.8125rem !important;
+}
+
+body:has(.for-login) .sign-up-message a {
+  color:           rgba(255, 255, 255, 0.75) !important;
+  font-weight:     500;
+  text-decoration: none;
+  transition:      color 0.2s;
+}
+
+body:has(.for-login) .sign-up-message a:hover {
+  color: #ffffff !important;
+}
+
+/* ── Alerts / error messages ────────────────────────────────────────────── */
+body:has(.for-login) .alert {
+  background:    rgba(239, 68, 68, 0.12) !important;
+  border:        1px solid rgba(239, 68, 68, 0.25) !important;
+  border-radius: 8px !important;
+  color:         #fca5a5 !important;
+  font-size:     0.8125rem !important;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  body:has(.for-login) .login-content.page-card {
+    padding:       1.75rem 1.375rem 1.5rem !important;
+    border-radius: 16px !important;
+  }
+
+  body:has(.for-login) .page-card-head h4 {
+    font-size: 1.375rem !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body:has(.for-login) .btn-login,
+  body:has(.for-login) .form-control {
+    transition: none !important;
+  }
+}
